@@ -1,0 +1,3 @@
+[submodule "faster-csidh"]
+	path = faster-csidh
+	url = https://github.com/herumi/faster-csidh.git

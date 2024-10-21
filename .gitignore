@@ -17,3 +17,7 @@ main
 
 faster-csidh\mcl\lib\*
 faster-csidh\mcl\obj\*
+
+*.gnuplot
+*.png
+*.txt

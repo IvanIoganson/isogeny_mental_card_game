@@ -5,6 +5,19 @@
 
 #include "protocols.h"
 
+void create_stack(stack_t *stack, size_t new_size)
+{
+    stack->size = new_size;
+    stack->cards = calloc(new_size, sizeof(*stack->cards));
+}
+
+void delete_stack(stack_t *stack)
+{
+    stack->size = 0;
+    free(stack->cards);
+    stack->cards = NULL;
+}
+
 // Generate random stack /////////////////////////////////////////////////////////////////////////
 
 void gen_rand_card(card_t *out)
@@ -17,15 +30,15 @@ void gen_rand_card(card_t *out)
 }
 
 typedef struct {
-    card_t *stack;
-    int start;
-    int end;
+    stack_t *stack;
+    size_t start;
+    size_t end;
 } card_stack_part;
 
 void *thread_gen_rand_card_stack(void *arg)
 {
     card_stack_part *stack_part = (card_stack_part*) arg;
-    int i;
+    size_t i;
 
     if (arg == NULL) {
         return NULL;
@@ -35,7 +48,7 @@ void *thread_gen_rand_card_stack(void *arg)
 
     for (i = stack_part->start; i <= stack_part->end; i++)
     {
-        gen_rand_card(&stack_part->stack[i]);
+        gen_rand_card(&stack_part->stack->cards[i]);
         //LOG("%d\n", i);
     }
 
@@ -44,7 +57,7 @@ void *thread_gen_rand_card_stack(void *arg)
     return NULL;
 }
 
-void gen_rand_card_stack(card_t *out)
+void gen_rand_card_stack(stack_t *out_stack)
 {
     pthread_t threads[THREAD_NUM];
     card_stack_part parts[THREAD_NUM];
@@ -52,10 +65,10 @@ void gen_rand_card_stack(card_t *out)
     int i = 0;
     float card_ind = 0.f;
     for (; i < THREAD_NUM; i++) {
-        parts[i].stack = out;
-        parts[i].start = (int)card_ind;
-        card_ind += (float)CARD_NUM / THREAD_NUM - 1.f;
-        parts[i].end = (i == THREAD_NUM-1 ? CARD_NUM-1 : (int)card_ind);
+        parts[i].stack = out_stack;
+        parts[i].start = (size_t)card_ind;
+        card_ind += (float)out_stack->size / THREAD_NUM - 1.f;
+        parts[i].end = (i == THREAD_NUM-1 ? out_stack->size-1 : (size_t)card_ind);
         card_ind += 1.f;
         pthread_create(&threads[i], NULL, thread_gen_rand_card_stack, (void *)&parts[i]);
     }
@@ -66,21 +79,27 @@ void gen_rand_card_stack(card_t *out)
 
 // Randomize Stack /////////////////////////////////////////////////////////////////////////
 
-void randomize_card(card_t *out)
+void randomize_card(card_t *out, private_key* out_mask)
 {
-    private_key sk;
-    csidh_private(&sk);
+    csidh_private(out_mask);
 
     card_t in;
     memcpy(&in, out, sizeof(in));
 
-    action(out, &in, &sk);
+    action(out, &in, out_mask);
 }
+
+typedef struct {
+    stack_t *stack;
+    private_key* out_masks;
+    size_t start;
+    size_t end;
+} card_mask_stack_part;
 
 void *thread_randomize_stack(void *arg)
 {
-    card_stack_part *stack_part = (card_stack_part*) arg;
-    int i;
+    card_mask_stack_part *stack_part = (card_mask_stack_part*) arg;
+    size_t i;
 
     if (arg == NULL) {
         return NULL;
@@ -90,7 +109,12 @@ void *thread_randomize_stack(void *arg)
 
     for (i = stack_part->start; i <= stack_part->end; i++)
     {
-        randomize_card(&stack_part->stack[i]);
+        if (stack_part->out_masks) {
+            randomize_card(&stack_part->stack->cards[i], &stack_part->out_masks[i]);
+        } else {
+            private_key _pk;
+            randomize_card(&stack_part->stack->cards[i], &_pk);
+        }
         //LOG("%d\n", i);
     }
 
@@ -99,18 +123,19 @@ void *thread_randomize_stack(void *arg)
     return NULL;
 }
 
-void randomize_stack(card_t *out)
+void randomize_stack(stack_t *out_stack, private_key* out_masks)
 {
     pthread_t threads[THREAD_NUM];
-    card_stack_part parts[THREAD_NUM];
+    card_mask_stack_part parts[THREAD_NUM];
 
     int i = 0;
     float card_ind = 0.f;
     for (; i < THREAD_NUM; i++) {
-        parts[i].stack = out;
-        parts[i].start = (int)card_ind;
-        card_ind += (float)CARD_NUM / THREAD_NUM - 1.f;
-        parts[i].end = (i == THREAD_NUM-1 ? CARD_NUM-1 : (int)card_ind);
+        parts[i].stack = out_stack;
+        parts[i].out_masks = out_masks;
+        parts[i].start = (size_t)card_ind;
+        card_ind += (float)out_stack->size / THREAD_NUM - 1.f;
+        parts[i].end = (i == THREAD_NUM-1 ? out_stack->size-1 : (size_t)card_ind);
         card_ind += 1.f;
         pthread_create(&threads[i], NULL, thread_randomize_stack, (void *)&parts[i]);
     }
@@ -151,17 +176,17 @@ void unmask_card(card_t *out, const card_t *in, const private_key *mask)
 }
 
 typedef struct {
-    card_t *out_stack;
-    const card_t *in_stack;
-    int start;
-    int end;
+    stack_t *out_stack;
+    const stack_t *in_stack;
+    size_t start;
+    size_t end;
     const private_key* mask;
 } card_stack_part_mask;
 
 void *thread_mask_stack(void *arg)
 {
     card_stack_part_mask *stack_part = (card_stack_part_mask*) arg;
-    int i;
+    size_t i;
 
     if (arg == NULL) {
         return NULL;
@@ -171,7 +196,7 @@ void *thread_mask_stack(void *arg)
 
     for (i = stack_part->start; i <= stack_part->end; i++)
     {
-        mask_card(&stack_part->out_stack[i], &stack_part->in_stack[i], stack_part->mask);
+        mask_card(&stack_part->out_stack->cards[i], &stack_part->in_stack->cards[i], stack_part->mask);
         //LOG("%d\n", i);
     }
 
@@ -180,38 +205,42 @@ void *thread_mask_stack(void *arg)
     return NULL;
 }
 
-void gen_rand_permut(int *rand_permut)
+void gen_rand_permut(int *rand_permut, size_t stack_size)
 {
-    int i;
-    for (i = 0; i < CARD_NUM; i++){
+    size_t i;
+    for (i = 0; i < stack_size; i++){
         rand_permut[i] = i;
     }
-    for (i = 0; i < CARD_NUM; i++){
-        int j = rand() % CARD_NUM;
+    for (i = 0; i < stack_size; i++){
+        int j = rand() % stack_size;
         int ttt = rand_permut[i];
         rand_permut[i] = rand_permut[j];
         rand_permut[j] = ttt;
     }
 }
 
-void shuffle_stack(card_t *out_stack, int* out_permut)
+void shuffle_stack(stack_t *out_stack, int* out_permut)
 {
-    int i;
-    card_t _stack[CARD_NUM];
+    size_t i;
+    stack_t _stack;
 
-    for (i = 0; i < CARD_NUM; i++){
-        memcpy(&_stack[i].A, &out_stack[i].A, sizeof(fp)); //fp_copy(_stack[i], out_stack[i]);
+    create_stack(&_stack, out_stack->size);
+
+    for (i = 0; i < out_stack->size; i++){
+        memcpy(&_stack.cards[i].A, &out_stack->cards[i].A, sizeof(fp)); //fp_copy(_stack[i], out_stack[i]);
     }
 
-    gen_rand_permut(out_permut);
-    LOG("Rand permutation: [");
-    for (i = 0; i < CARD_NUM; i++){
-        LOG("%d%s" , out_permut[i], (i == CARD_NUM - 1 ? "]\n" : ", "));
-        memcpy(&out_stack[i].A, &_stack[out_permut[i]].A, sizeof(fp)); //fp_copy(out_stack[i], _stack[out_permut[i]]);
+    gen_rand_permut(out_permut, out_stack->size);
+    //LOG("Rand permutation: [");
+    for (i = 0; i < out_stack->size; i++){
+        //LOG("%d%s" , out_permut[i], (i == out_stack->size - 1 ? "]\n" : ", "));
+        memcpy(&out_stack->cards[i].A, &_stack.cards[out_permut[i]].A, sizeof(fp)); //fp_copy(out_stack[i], _stack[out_permut[i]]);
     }
+
+    delete_stack(&_stack);
 }
 
-void mask_and_shuffle_stack(card_t *out_stack, private_key* out_mask, int* out_permut, const card_t *in_stack)
+void mask_and_shuffle_stack(stack_t *out_stack, private_key* out_mask, int* out_permut, const stack_t *in_stack)
 {
     pthread_t threads[THREAD_NUM];
     card_stack_part_mask parts[THREAD_NUM];
@@ -223,9 +252,9 @@ void mask_and_shuffle_stack(card_t *out_stack, private_key* out_mask, int* out_p
     for (; i < THREAD_NUM; i++) {
         parts[i].out_stack = out_stack;
         parts[i].in_stack = in_stack;
-        parts[i].start = (int)card_ind;
-        card_ind += (float)CARD_NUM / THREAD_NUM - 1.f;
-        parts[i].end = (i == THREAD_NUM-1 ? CARD_NUM-1 : (int)card_ind);
+        parts[i].start = (size_t)card_ind;
+        card_ind += (float)out_stack->size / THREAD_NUM - 1.f;
+        parts[i].end = (i == THREAD_NUM-1 ? out_stack->size-1 : (size_t)card_ind);
         card_ind += 1.f;
         parts[i].mask = out_mask;
         pthread_create(&threads[i], NULL, thread_mask_stack, (void *)&parts[i]);

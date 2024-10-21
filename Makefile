@@ -10,6 +10,6 @@ Default:
 		faster-csidh/mont.c \
 		faster-csidh/csidh.c \
 		CSI-Fish/reduce.c \
-		src/main.c src/protocols.c src/ZKP.c \
+		src/main.c src/protocols.c src/ZKP.c src/benchmarks.c \
 		faster-csidh/mcl.o -lmcl -L faster-csidh/mcl/lib -lstdc++ \
 		-o main
